@@ -2,7 +2,7 @@
 
 > **A cognitive architecture for AI agents that actually remembers.**
 
-LOOP is a novel approach to AI memory management inspired by cognitive science. Instead of treating every conversation turn equally, LOOP implements a three-tier memory hierarchy with Bayesian importance tracking—letting agents decide what matters and what to forget.
+LOOP is a novel approach to AI memory management inspired by cognitive science. Instead of treating every conversation turn equally, LOOP implements a three-tier memory hierarchy with Bayesian importance tracking that lets agents decide what matters and what to forget.
 
 ## Why LOOP?
 
