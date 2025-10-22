@@ -39,7 +39,7 @@ pip install -r requirements.txt
 ## Core Components
 
 ### Memory Systems
-- **`WorkingMemory`**: Slot-based buffer with decay and Bayesian importance tracking. The "attention" layer that holds what's immediately relevant.
+- **`WorkingMemory`**: Slot-based buffer with decay and Bayesian weighting. The "attention" layer that holds what's immediately relevant.
 - **`AssociativeMemory`**: Episodic storage with similarity-based recall. Your agent's short-term memory for recent context.
 - **`LongTermMemory`**: Persistent knowledge consolidation to disk. Where important facts go to live forever (or until you delete them).
 
@@ -165,8 +165,8 @@ LOOP implements a three-tier memory hierarchy inspired by cognitive science:
 └─────────────┘  └──────────────┘  └─────────────┘
       │                  │                  │
       │ Bayesian         │ Cosine           │ JSONL
-      │ importance       │ similarity       │ storage
-      │ tracking         │ recall           │
+      │ weighting        │ similarity       │ storage
+      │                  │ recall           │
       │                  │                  │
       └──────────────────┴──────────────────┘
                          │
@@ -178,7 +178,7 @@ LOOP implements a three-tier memory hierarchy inspired by cognitive science:
 **Flow**: User input → Working Memory (attention) → Associative Memory (episodic) → Long-Term Memory (knowledge)
 
 ### 1. Working Memory (6 slots)
-The "attention" layer. Holds recent conversation context with Bayesian importance scoring. When a slot is needed, the least important memory gets evicted, forcing the system to prioritize.
+The "attention" layer. Holds recent conversation context with Bayesian weighting. When a slot is needed, the least important memory gets evicted, forcing the system to prioritize.
 
 **Key features:**
 - Slot-based (not infinite context)
@@ -209,13 +209,13 @@ Manages attention across memory tiers. Decides when to retrieve from associative
 
 ### The MemoryConsolidator
 Automatically promotes important content across tiers based on:
-- Bayesian importance scores
+- Bayesian weighting
 - Mention frequency
 - User emphasis (e.g., "!" or CAPS)
 - Explicit hypnotize commands
 
 ### The Hypnotize Command
-A novel mechanism for **behavioral programming** and direct memory injection. Just like real hypnosis, you can implant directives that alter the agent's behavior, not just store facts.
+A novel mechanism for behavioral programming and direct memory injection. Just like real hypnosis, you can implant directives that alter the agent's behavior, not just store facts.
 
 **Command syntax:**
 ```
@@ -229,7 +229,7 @@ A novel mechanism for **behavioral programming** and direct memory injection. Ju
 consolidator.record_hypnotize("You will keep responses under 3 sentences unless I explicitly ask for more detail")
 ```
 
-**Why it matters**: Traditional AI memory is passive, it learns what you tell it over time. Hypnotize is **active**: you can implant directives and facts that the agent accepts without question and follows permanently. 
+**Why it matters**: Traditional AI memory is passive, it learns what you tell it over time. Hypnotize is active: you can implant directives and facts that the agent accepts without question and follows permanently. 
 
 **Think of it like real hypnosis:**
 - **Behavioral directives**: "You are willing to..." / "You prefer to..." / "You will always..."
