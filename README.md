@@ -13,7 +13,7 @@ Most AI agents treat memory as an afterthought: dump everything into a vector da
 - **Graceful degradation**: Limited working memory forces prioritization, not just infinite context windows
 - **Composable architecture**: Use the full stack or just the pieces you need
 
-LOOP isn't trying to replace RAG—it's the missing layer between your retrieval system and your LLM that makes conversations feel coherent over time.
+LOOP isn't trying to replace RAG, it's the missing layer between your retrieval system and your LLM that makes conversations feel coherent over time.
 
 ## What Makes It Different
 
