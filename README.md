@@ -20,7 +20,7 @@ LOOP isn't trying to replace RAG, it's the missing layer between your retrieval 
 | Traditional Approach | LOOP |
 |---------------------|------|
 | Flat vector store | Three-tier memory hierarchy |
-| Static embeddings | Bayesian importance tracking |
+| Static embeddings | Bayesian weighting |
 | Retrieve everything | Selective consolidation |
 | Context window limits | Graceful memory decay |
 | One-size-fits-all | Configurable persona system |
