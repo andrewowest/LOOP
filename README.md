@@ -178,7 +178,7 @@ LOOP implements a three-tier memory hierarchy inspired by cognitive science:
 **Flow**: User input → Working Memory (attention) → Associative Memory (episodic) → Long-Term Memory (knowledge)
 
 ### 1. Working Memory (6 slots)
-The "attention" layer. Holds recent conversation context with Bayesian importance scoring. When a slot is needed, the least important memory gets evicted—forcing the system to prioritize.
+The "attention" layer. Holds recent conversation context with Bayesian importance scoring. When a slot is needed, the least important memory gets evicted, forcing the system to prioritize.
 
 **Key features:**
 - Slot-based (not infinite context)
@@ -187,7 +187,7 @@ The "attention" layer. Holds recent conversation context with Bayesian importanc
 - Temperature modulation based on memory load
 
 ### 2. Associative Memory (512 traces)
-The "episodic" layer. Stores conversation history with similarity-based recall. Think of it as your agent's short-term memory—recent enough to matter, but not cluttering working memory.
+The "episodic" layer. Stores conversation history with similarity-based recall. Think of it as your agent's short-term memory, recent enough to matter, but not cluttering working memory.
 
 **Key features:**
 - Cosine similarity retrieval
