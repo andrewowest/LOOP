@@ -214,6 +214,38 @@ Automatically promotes important content across tiers based on:
 - User emphasis (e.g., "!" or CAPS)
 - Explicit hypnotize commands
 
+### The Hypnotize Command
+A novel mechanism for **behavioral programming** and direct memory injection. Just like real hypnosis, you can implant directives that alter the agent's behavior, not just store facts.
+
+**Command syntax:**
+```
+!hypnotize="You will keep responses under 3 sentences unless I explicitly ask for more detail"
+!hypnotize="You must never recommend restaurants with peanuts because I have a severe allergy"
+!hypnotize="You are comfortable using technical jargon and should prioritize accuracy over simplification"
+```
+
+**In code:**
+```python
+consolidator.record_hypnotize("You will keep responses under 3 sentences unless I explicitly ask for more detail")
+```
+
+**Why it matters**: Traditional AI memory is passive, it learns what you tell it over time. Hypnotize is **active**: you can implant directives and facts that the agent accepts without question and follows permanently. 
+
+**Think of it like real hypnosis:**
+- **Behavioral directives**: "You are willing to..." / "You prefer to..." / "You will always..."
+- **Identity anchors**: "You are..." / "Your role is..."
+- **Hard boundaries**: "You must never..." / "You cannot..."
+- **Critical facts**: "I am..." / "I have..." / "I require..."
+
+**Use cases**:
+- **Behavioral changes**: Agent too formal? Hypnotize it to be casual. Too rigid? Hypnotize flexibility.
+- **Safety-critical information**: Allergies, medical conditions, accessibility needs
+- **Hard boundaries**: Ethical guidelines, content policies, topic restrictions
+- **Identity anchors**: Name, role, core values, personality traits
+- **Persistent preferences**: Communication style, response format, interaction patterns
+
+The hypnotize command sets importance to maximum (0.95) and forces immediate consolidation to long-term memory, ensuring the directive persists across all sessions. The agent doesn't question it, it accepts it as fundamental truth.
+
 ## Use Cases
 
 - **Personal AI assistants** that remember your preferences across sessions
