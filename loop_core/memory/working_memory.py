@@ -21,6 +21,14 @@ class WorkingMemoryConfig:
 
 
 class WorkingMemory:
+    """Slot-based attention buffer with optional Bayesian importance.
+
+    Holds a fixed number of recent embeddings. When all slots are full, the
+    least important slot is evicted on the next update. Importance can be
+    tracked either as a simple decaying scalar or, by default, as a posterior
+    belief maintained by BayesianEngine.
+    """
+
     def __init__(self, config: WorkingMemoryConfig) -> None:
         if config.slots <= 0:
             raise ValueError("WorkingMemory requires at least one slot.")
@@ -67,15 +75,18 @@ class WorkingMemory:
             self.importance = self.importance * (1.0 - self.config.decay_rate)
         else:
             self._bayes_engine.log_odds -= self.config.bayesian_decay
-            self._bayes_engine.log_odds.clamp_(-10.0, 10.0)
 
         slot_idx = self._select_slot()
         energy = torch.linalg.norm(embedding).clamp_min(1e-6)
-        normalized_importance = torch.tanh(energy).item()
 
+        # importance_hint is authoritative when caller supplies one; the
+        # norm-derived fallback only kicks in for raw inserts. Hard cap below
+        # 1.0 keeps log-odds finite in the Bayesian path.
         importance_hint = metadata.get("importance_hint") if metadata else None
         if importance_hint is not None:
-            normalized_importance = max(normalized_importance, float(importance_hint))
+            normalized_importance = float(importance_hint)
+        else:
+            normalized_importance = float(torch.tanh(energy * 0.1).item())
         normalized_importance = max(0.0, min(0.99, normalized_importance))
 
         self.storage[slot_idx] = {
@@ -88,8 +99,6 @@ class WorkingMemory:
             self.importance[slot_idx] = normalized_importance
         else:
             prob_hint = max(0.05, min(0.95, normalized_importance))
-            if importance_hint is not None:
-                prob_hint = max(prob_hint, max(0.05, min(0.95, float(importance_hint))))
             log_likelihood = float(torch.logit(torch.tensor(prob_hint)))
             self._bayes_engine.update(slot_idx, log_likelihood)
             self._bayes_engine.log_odds.clamp_(-10.0, 10.0)

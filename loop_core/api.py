@@ -1,109 +1,122 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 import os
-
-try:
-    from groq import Groq
-except ImportError:  # pragma: no cover
-    Groq = None
-
-try:
-    from openai import OpenAI
-except ImportError:  # pragma: no cover
-    OpenAI = None
+from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 
-class GroqEngine:
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: str = "llama-3.3-70b-versatile",
-        temperature: float = 0.7,
-    ) -> None:
-        if Groq is None:
-            raise ImportError("groq package required. Install with: pip install groq")
+_PREFIXES_TO_STRIP = ("Response:", "Assistant:", "AI:")
+_FALLBACK_RESPONSE = "I'm not sure how to respond."
 
-        self.api_key = api_key or os.getenv("GROQ_API_KEY")
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY not found.")
 
-        self.client = Groq(api_key=self.api_key)
+@runtime_checkable
+class LLMEngine(Protocol):
+    """Minimal interface every provider adapter must satisfy."""
+
+    model: str
+    temperature: float
+
+    def generate(self, prompt: str, max_tokens: int = 128) -> str: ...
+
+
+class _ChatCompletionEngine:
+    """Shared logic for OpenAI-compatible chat-completion clients.
+
+    Both Groq and OpenAI expose `client.chat.completions.create(...)` with
+    identical message shapes, so the only thing that varies is which client
+    class to instantiate.
+    """
+
+    def __init__(self, client: Any, model: str, temperature: float) -> None:
+        self.client = client
         self.model = model
         self.temperature = temperature
 
     def generate(self, prompt: str, max_tokens: int = 128) -> str:
-        messages = [{"role": "user", "content": prompt}]
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=max_tokens,
         )
-        generated = response.choices[0].message.content.strip()
-        for prefix in ["Response:", "Assistant:", "AI:"]:
-            if generated.startswith(prefix):
-                generated = generated[len(prefix) :].strip()
+        text = (response.choices[0].message.content or "").strip()
+        for prefix in _PREFIXES_TO_STRIP:
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
                 break
-        return generated or "I'm not sure how to respond."
+        return text or _FALLBACK_RESPONSE
 
 
-class OpenAIEngine:
+class GroqEngine(_ChatCompletionEngine):
+    DEFAULT_MODEL = "llama-3.3-70b-versatile"
+    ENV_VAR = "GROQ_API_KEY"
+
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gpt-4o-mini",
+        model: str = DEFAULT_MODEL,
         temperature: float = 0.7,
     ) -> None:
-        if OpenAI is None:
-            raise ImportError("openai package required. Install with: pip install openai")
+        try:
+            from groq import Groq
+        except ImportError as exc:
+            raise ImportError(
+                "groq package required. Install with: pip install 'loop-core[groq]'"
+            ) from exc
 
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY not found.")
+        resolved_key = api_key or os.getenv(self.ENV_VAR)
+        if not resolved_key:
+            raise ValueError(f"{self.ENV_VAR} not set and no api_key provided.")
 
-        self.client = OpenAI(api_key=self.api_key)
-        self.model = model
-        self.temperature = temperature
-
-    def generate(self, prompt: str, max_tokens: int = 128) -> str:
-        messages = [{"role": "user", "content": prompt}]
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=max_tokens,
-        )
-        generated = response.choices[0].message.content.strip()
-        for prefix in ["Response:", "Assistant:", "AI:"]:
-            if generated.startswith(prefix):
-                generated = generated[len(prefix) :].strip()
-                break
-        return generated or "I'm not sure how to respond."
+        super().__init__(client=Groq(api_key=resolved_key), model=model, temperature=temperature)
 
 
-ENGINE_REGISTRY = {
+class OpenAIEngine(_ChatCompletionEngine):
+    DEFAULT_MODEL = "gpt-4o-mini"
+    ENV_VAR = "OPENAI_API_KEY"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = DEFAULT_MODEL,
+        temperature: float = 0.7,
+    ) -> None:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise ImportError(
+                "openai package required. Install with: pip install 'loop-core[openai]'"
+            ) from exc
+
+        resolved_key = api_key or os.getenv(self.ENV_VAR)
+        if not resolved_key:
+            raise ValueError(f"{self.ENV_VAR} not set and no api_key provided.")
+
+        super().__init__(client=OpenAI(api_key=resolved_key), model=model, temperature=temperature)
+
+
+ENGINE_REGISTRY: Dict[str, type] = {
     "groq": GroqEngine,
     "openai": OpenAIEngine,
 }
 
 
-def get_engine(provider: str, api_key: Optional[str] = None, runtime: Optional[Dict[str, float]] = None):
+def get_engine(
+    provider: str,
+    api_key: Optional[str] = None,
+    runtime: Optional[Dict[str, Any]] = None,
+) -> LLMEngine:
+    """Construct an LLM engine adapter for the named provider."""
     runtime = runtime or {}
-    provider = (provider or "groq").lower()
-    if provider not in ENGINE_REGISTRY:
-        raise ValueError(f"Unsupported provider: {provider}")
+    key = (provider or "groq").lower()
+    if key not in ENGINE_REGISTRY:
+        supported = ", ".join(sorted(ENGINE_REGISTRY))
+        raise ValueError(f"Unsupported provider: {provider!r}. Supported: {supported}.")
 
-    engine_cls = ENGINE_REGISTRY[provider]
-    kwargs = {
+    engine_cls = ENGINE_REGISTRY[key]
+    kwargs: Dict[str, Any] = {
         "api_key": api_key,
         "temperature": float(runtime.get("temperature", 0.7)),
     }
-
-    if provider == "groq":
-        kwargs["model"] = runtime.get("model", "llama-3.3-70b-versatile")
-    elif provider == "openai":
-        kwargs["model"] = runtime.get("model", "gpt-4o-mini")
-
+    if "model" in runtime:
+        kwargs["model"] = runtime["model"]
     return engine_cls(**kwargs)

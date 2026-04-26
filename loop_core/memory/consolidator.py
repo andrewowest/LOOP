@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import torch
@@ -12,6 +12,8 @@ from .working_memory import WorkingMemory
 
 
 class MemoryConsolidator:
+    """Promotes content across memory tiers based on importance and mention frequency."""
+
     def __init__(
         self,
         working_memory: WorkingMemory,
@@ -32,16 +34,32 @@ class MemoryConsolidator:
         self.min_mentions = int(config.get("min_mentions", 2))
         self.hypnotize_bonus = float(config.get("hypnotize_bonus", 0.95))
         self.emphasis_bonus = float(config.get("emphasis_bonus", 0.25))
+        # User turns carry more weight than assistant turns: the user expresses
+        # intent, the assistant restates. user_base_hint sits just above the
+        # default wm_to_am_threshold so a single declarative user turn is
+        # promotable; repeated mentions then compound via mention_bonus.
+        self.user_base_hint = float(config.get("user_base_hint", 0.6))
+        self.assistant_base_hint = float(config.get("assistant_base_hint", 0.3))
+        self.mention_bonus = float(config.get("mention_bonus", 0.15))
 
         self.mention_counts: Dict[str, int] = defaultdict(int)
         self.persisted_keys = set()
 
     def process_turn(self, user_text: str, ai_text: str) -> None:
-        self._ingest_event(user_text, "user", 0.0, force_long_term=False)
-        self._ingest_event(ai_text, "assistant", 0.0, force_long_term=False)
+        self._ingest_event(user_text, "user", self.user_base_hint, force_long_term=False)
+        self._ingest_event(ai_text, "assistant", self.assistant_base_hint, force_long_term=False)
 
     def record_hypnotize(self, payload: str) -> None:
         self._ingest_event(payload, "hypnotize", self.hypnotize_bonus, force_long_term=True)
+
+    def absorb_persona(self, persona) -> None:
+        """Ingest a PersonaProfile's hypnotize directives as forced LTM entries.
+
+        Use this after load_persona_profile() so directives written into a
+        profile file behave identically to runtime !hypnotize="..." commands.
+        """
+        for directive in getattr(persona, "hypnotize_directives", None) or []:
+            self.record_hypnotize(directive)
 
     def _ingest_event(self, text: str, kind: str, base_hint: float, force_long_term: bool) -> None:
         normalized = (text or "").strip()
@@ -53,6 +71,8 @@ class MemoryConsolidator:
         mentions = self.mention_counts[key]
 
         importance_hint = self._importance_hint(normalized, base_hint)
+        if mentions > 1:
+            importance_hint = min(0.9, importance_hint + self.mention_bonus * (mentions - 1))
         metadata = {
             "type": kind,
             "text": normalized,
@@ -76,10 +96,7 @@ class MemoryConsolidator:
         hint = base_hint
         if not text:
             return hint
-        if "!" in text:
-            hint = max(hint, self.emphasis_bonus)
-        uppercase = sum(1 for ch in text if ch.isupper())
-        if uppercase and uppercase >= 4 and uppercase > len(text) * 0.3:
+        if "!" in text or _is_shouting(text):
             hint = max(hint, self.emphasis_bonus)
         return hint
 
@@ -116,8 +133,14 @@ class MemoryConsolidator:
             "type": metadata.get("type", ""),
             "mentions": mentions,
             "importance": importance,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self.long_term_memory.consolidate([entry])
         if key:
             self.persisted_keys.add(key)
+
+
+def _is_shouting(text: str) -> bool:
+    """Heuristic: at least 4 uppercase letters and >30% of the text is caps."""
+    upper = sum(1 for ch in text if ch.isupper())
+    return upper >= 4 and upper > len(text) * 0.3

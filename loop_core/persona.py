@@ -3,22 +3,47 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
-from loop_core.memory import AssociativeMemory, LongTermMemory, WorkingMemory
 from loop_core.controller import Controller
+from loop_core.memory import AssociativeMemory, LongTermMemory, WorkingMemory
+
+if TYPE_CHECKING:
+    from loop_core.rag import PersonaCoordinator
 
 
 @dataclass
 class PersonaProfile:
+    """Configurable agent personality.
+
+    Attributes:
+        name: Speaker label used when the coordinator builds prompts.
+        persona_facts: Identity / role facts about the agent.
+        tone_guidelines: How the agent should sound.
+        response_guidelines: How the agent should structure replies.
+        hypnotize_directives: Imperative directives implanted via the
+            !hypnotize="..." syntax. Treated as non-negotiable rules at
+            prompt time.
+        working_memory_slots / decay / prior_conservatism: Optional tuning
+            overrides parsed from a profile file's "Bayesian weights"
+            section.
+        logo: Optional ASCII art for CLI front-ends.
+    """
+
+    name: str = "Assistant"
     persona_facts: List[str] = field(default_factory=list)
     tone_guidelines: List[str] = field(default_factory=list)
     response_guidelines: List[str] = field(default_factory=list)
-    hypnotize_directive: Optional[str] = None
+    hypnotize_directives: List[str] = field(default_factory=list)
     working_memory_slots: Optional[int] = None
     working_memory_decay: Optional[float] = None
     prior_conservatism: Optional[float] = None
     logo: Optional[str] = None
+
+    @property
+    def hypnotize_directive(self) -> Optional[str]:
+        # Back-compat shim for the original singular attribute.
+        return self.hypnotize_directives[-1] if self.hypnotize_directives else None
 
     def create_coordinator(
         self,
@@ -26,7 +51,7 @@ class PersonaProfile:
         associative_memory: AssociativeMemory,
         long_term_memory: LongTermMemory,
         controller: Controller,
-    ):
+    ) -> "PersonaCoordinator":
         from loop_core.rag import PersonaCoordinator
 
         return PersonaCoordinator(
@@ -38,93 +63,116 @@ class PersonaProfile:
         )
 
 
-SECTION_MAP: Dict[str, str] = {
-    "meta overview": "meta",
-    "voice, tone & rhetoric": "tone",
+# Persona files use a simple section-based plain-text format. A line that
+# matches a section heading switches the active section; bullet lines
+# ("- ...") are collected into the corresponding list. Optional numeric
+# tunables live under "Bayesian weights & numerics".
+_SECTION_PREFIXES: Dict[str, str] = {
+    "meta overview": "facts",
+    "voice, tone": "tone",
     "interaction protocols": "interaction",
-    "bayesian weights & numerics": "numerics",
-    "quick-reference": "cheatsheet",
+    "bayesian weights": "numerics",
+    "quick-reference": "interaction",
 }
 
+_HYPNOTIZE_RE = re.compile(r'!hypnotize="(.+?)"', re.IGNORECASE)
+_HEADING_RE = re.compile(r"^\s*(?:\d+\)\s+)?([A-Z].+?)\s*$")
 
-def _normalize_section_name(line: str) -> Optional[str]:
-    match = re.match(r"^\s*(?:\d+\)\s+)?([A-Z].+?)\s*$", line)
+
+def _match_section(line: str) -> Optional[str]:
+    match = _HEADING_RE.match(line)
     if not match:
         return None
-    return match.group(1).strip().lower()
+    heading = match.group(1).strip().lower()
+    for prefix, section in _SECTION_PREFIXES.items():
+        if heading.startswith(prefix):
+            return section
+    return None
 
 
-def load_persona_profile(path: Path) -> PersonaProfile:
+def _parse_numeric(entry: str) -> Optional[tuple[str, str]]:
+    if "=" not in entry:
+        return None
+    key, _, rest = entry.partition("=")
+    rest = rest.strip()
+    if not rest:
+        return None
+    return key.strip(), rest.split()[0]
+
+
+def load_persona_profile(path: Union[str, Path]) -> PersonaProfile:
+    """Load a PersonaProfile from a plain-text profile file.
+
+    Returns an empty default profile if the path does not exist, so callers
+    can treat the file as optional configuration.
+    """
+    path = Path(path)
     profile = PersonaProfile()
     if not path.exists():
         return profile
 
     text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
+    section: Optional[str] = None
 
-    current_section = None
-    hypnotize_pattern = re.compile(r"!hypnotize=\"(.+?)\"", re.IGNORECASE)
-
-    for raw_line in lines:
+    for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
 
-        normalized = _normalize_section_name(line)
-        if normalized and any(normalized.startswith(prefix) for prefix in SECTION_MAP):
-            current_section = normalized
+        for directive in _HYPNOTIZE_RE.findall(line):
+            cleaned = directive.strip()
+            if cleaned and cleaned not in profile.hypnotize_directives:
+                profile.hypnotize_directives.append(cleaned)
+
+        new_section = _match_section(line)
+        if new_section is not None:
+            section = new_section
             continue
 
-        hypo_match = hypnotize_pattern.search(line)
-        if hypo_match:
-            profile.hypnotize_directive = hypo_match.group(1).strip()
+        if not line.startswith("- ") or section is None:
             continue
-
-        if not line.startswith("- "):
-            continue
-
         entry = line[2:].strip()
         if not entry:
             continue
 
-        if current_section is None:
-            continue
-
-        if "meta" in current_section:
-            profile.persona_facts.append(entry)
-        elif "voice" in current_section:
+        if section == "facts":
+            if entry.lower().startswith("name:"):
+                profile.name = entry.split(":", 1)[1].strip() or profile.name
+            else:
+                profile.persona_facts.append(entry)
+        elif section == "tone":
             profile.tone_guidelines.append(entry)
-        elif "interaction" in current_section or "quick-reference" in current_section:
+        elif section == "interaction":
             profile.response_guidelines.append(entry)
-        elif "bayesian" in current_section:
-            if entry.startswith("WM_slots_default"):
-                try:
-                    profile.working_memory_slots = int(entry.split("=")[1].strip())
-                except (IndexError, ValueError):
-                    pass
-            elif entry.startswith("WM_decay_rate_base"):
-                try:
-                    profile.working_memory_decay = float(entry.split("=")[1].strip().split()[0])
-                except (IndexError, ValueError):
-                    pass
-            elif entry.startswith("prior_conservatism"):
-                try:
-                    profile.prior_conservatism = float(entry.split("=")[1].strip())
-                except (IndexError, ValueError):
-                    pass
-
-    def _dedupe(items: List[str]) -> List[str]:
-        seen = set()
-        result: List[str] = []
-        for item in items:
-            if item in seen:
+        elif section == "numerics":
+            parsed = _parse_numeric(entry)
+            if parsed is None:
                 continue
-            seen.add(item)
-            result.append(item)
-        return result
+            key, value = parsed
+            try:
+                if key == "WM_slots_default":
+                    profile.working_memory_slots = int(value)
+                elif key == "WM_decay_rate_base":
+                    profile.working_memory_decay = float(value)
+                elif key == "prior_conservatism":
+                    profile.prior_conservatism = float(value)
+            except ValueError:
+                continue
 
     profile.persona_facts = _dedupe(profile.persona_facts)
     profile.tone_guidelines = _dedupe(profile.tone_guidelines)
     profile.response_guidelines = _dedupe(profile.response_guidelines)
-
     return profile
+
+
+def _dedupe(items: List[str]) -> List[str]:
+    seen: set = set()
+    result: List[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+

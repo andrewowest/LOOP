@@ -25,6 +25,8 @@ class MemoryTrace:
 
 
 class AssociativeMemory:
+    """Episodic store with cosine-similarity recall and freshness-based eviction."""
+
     def __init__(self, config: AssociativeMemoryConfig) -> None:
         if config.capacity <= 0:
             raise ValueError("AssociativeMemory requires positive capacity.")
@@ -52,13 +54,19 @@ class AssociativeMemory:
         )
 
     def _select_eviction_index(self) -> int:
-        scores = []
+        # Score = freshness + usefulness. Evict the lowest: oldest trace that
+        # nobody has recalled. retention_factor in (0, 1) tunes how quickly
+        # age erodes the freshness term relative to recall count.
+        decay = 1.0 - self.config.retention_factor
+        best_idx = 0
+        best_score = float("inf")
         for idx, trace in enumerate(self.traces):
-            retention = (self.step_counter - trace.age + 1)
-            score = trace.recall_count + retention * (1.0 - self.config.retention_factor)
-            scores.append(score)
-        max_idx = scores.index(max(scores))
-        return max_idx
+            staleness = self.step_counter - trace.age
+            score = trace.recall_count - staleness * decay
+            if score < best_score:
+                best_score = score
+                best_idx = idx
+        return best_idx
 
     def recall(self, query: torch.Tensor, k: int = 5) -> List[Tuple[float, MemoryTrace]]:
         if not self.traces:

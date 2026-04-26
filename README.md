@@ -28,12 +28,17 @@ LOOP isn't trying to replace RAG, it's the missing layer between your retrieval 
 ## Installation
 
 ```bash
+# Core only — bring your own LLM
 pip install -e .
-```
 
-Or install from requirements:
-```bash
-pip install -r requirements.txt
+# With Groq (fast, free tier)
+pip install -e '.[groq]'
+
+# With OpenAI
+pip install -e '.[openai]'
+
+# Everything
+pip install -e '.[all]'
 ```
 
 ## Core Components
@@ -78,43 +83,51 @@ for slot in wm.summary():
 ### Full Stack Example
 
 ```python
+from pathlib import Path
+
+from sentence_transformers import SentenceTransformer
+
 from loop_core import (
-    WorkingMemory, WorkingMemoryConfig,
     AssociativeMemory, AssociativeMemoryConfig,
-    LongTermMemory, LongTermMemoryConfig,
     Controller, ControllerConfig,
+    LongTermMemory, LongTermMemoryConfig,
     MemoryConsolidator,
+    WorkingMemory, WorkingMemoryConfig,
+    get_engine,
     load_persona_profile,
-    get_engine
 )
 
-# Initialize memory hierarchy
+# 1. Memory hierarchy
 wm = WorkingMemory(WorkingMemoryConfig(slots=6))
 am = AssociativeMemory(AssociativeMemoryConfig(capacity=512))
-ltm = LongTermMemory(LongTermMemoryConfig(storage_path="memory/knowledge.jsonl"))
+ltm = LongTermMemory(LongTermMemoryConfig(storage_path=Path("memory/knowledge.jsonl")))
 controller = Controller(wm, am, ControllerConfig())
 
-# Set up consolidation pipeline
+# 2. Consolidation pipeline (encoder must expose .encode([...], convert_to_numpy=True))
+encoder = SentenceTransformer("all-MiniLM-L6-v2")
 consolidator = MemoryConsolidator(
     working_memory=wm,
     associative_memory=am,
     long_term_memory=ltm,
-    encoder=your_sentence_transformer,  # e.g., SentenceTransformer('all-MiniLM-L6-v2')
-    config={"wm_to_am_threshold": 0.55, "am_to_ltm_threshold": 0.75}
+    encoder=encoder,
+    config={"wm_to_am_threshold": 0.55, "am_to_ltm_threshold": 0.75},
 )
 
-# Load persona and API engine
+# 3. Persona — !hypnotize directives in the file are absorbed straight to LTM
 persona = load_persona_profile("persona.txt")
-engine = get_engine("groq", api_key="your-key")
+consolidator.absorb_persona(persona)
 
-# Build coordinator
 coordinator = persona.create_coordinator(wm, am, ltm, controller)
 
-# Process a conversation turn
+# 4. Optional: an LLM engine for generation
+engine = get_engine("groq", runtime={"model": "llama-3.3-70b-versatile"})
+
+# 5. Process a conversation turn
 user_input = "What's my favorite color?"
-ai_response = "Based on our previous conversations, you prefer blue."
+ai_response = engine.generate(coordinator.build_prompt(user_input))
+coordinator.update_conversation(user_input, ai_response)
 consolidator.process_turn(user_input, ai_response)
-controller.step()  # Advance the controller state
+controller.step()  # advance one turn: decay energy, cool associative memory
 ```
 
 ### Integration with Existing RAG
@@ -184,7 +197,7 @@ The "attention" layer. Holds recent conversation context with Bayesian importanc
 - Slot-based (not infinite context)
 - Bayesian belief tracking per slot
 - Configurable decay rates
-- Temperature modulation based on memory load
+- Sampling temperature modulated by average slot importance
 
 ### 2. Associative Memory (512 traces)
 The "episodic" layer. Stores conversation history with similarity-based recall. Think of it as your agent's short-term memory, recent enough to matter, but not cluttering working memory.
@@ -192,7 +205,7 @@ The "episodic" layer. Stores conversation history with similarity-based recall. 
 **Key features:**
 - Cosine similarity retrieval
 - Recall frequency tracking
-- Age-based eviction policies
+- Freshness-based eviction (drops the stalest, least-recalled trace)
 - Configurable capacity and thresholds
 
 ### 3. Long-Term Memory (persistent)
@@ -201,7 +214,7 @@ The "knowledge" layer. High-importance memories get consolidated to disk as JSON
 **Key features:**
 - Persistent storage (survives restarts)
 - Automatic consolidation from associative memory
-- Configurable retention policies
+- Configurable maximum entry count with rolling truncation
 - Easy to inspect and edit (plain JSONL)
 
 ### The Controller
@@ -217,16 +230,23 @@ Automatically promotes important content across tiers based on:
 ### The Hypnotize Command
 A novel mechanism for **behavioral programming** and direct memory injection. Just like real hypnosis, you can implant directives that alter the agent's behavior, not just store facts.
 
-**Command syntax:**
+Hypnotize directives can be declared in two equivalent ways:
+
+**1. In a persona file** (loaded once at startup):
 ```
 !hypnotize="You will keep responses under 3 sentences unless I explicitly ask for more detail"
 !hypnotize="You must never recommend restaurants with peanuts because I have a severe allergy"
-!hypnotize="You are comfortable using technical jargon and should prioritize accuracy over simplification"
 ```
-
-**In code:**
+After loading, replay them into long-term memory:
 ```python
-consolidator.record_hypnotize("You will keep responses under 3 sentences unless I explicitly ask for more detail")
+persona = load_persona_profile("persona.txt")
+consolidator.absorb_persona(persona)
+```
+The coordinator surfaces every directive as a "Hard directives (non-negotiable)" block on every prompt it builds.
+
+**2. At runtime** (e.g. parsed out of an incoming user message):
+```python
+consolidator.record_hypnotize("You are comfortable using technical jargon and should prioritize accuracy over simplification")
 ```
 
 **Why it matters**: Traditional AI memory is passive, it learns what you tell it over time. Hypnotize is **active**: you can implant directives and facts that the agent accepts without question and follows permanently. 
@@ -245,6 +265,34 @@ consolidator.record_hypnotize("You will keep responses under 3 sentences unless 
 - **Persistent preferences**: Communication style, response format, interaction patterns
 
 The hypnotize command sets importance to maximum (0.95) and forces immediate consolidation to long-term memory, ensuring the directive persists across all sessions. The agent doesn't question it, it accepts it as fundamental truth.
+
+## Persona File Schema
+
+A persona file is plain text. Numbered section headings switch the active section; bullet lines (`- ...`) populate it. A complete example lives in [`examples/persona.example.txt`](examples/persona.example.txt).
+
+```
+1) Meta Overview
+- Name: Iris                 # sets PersonaProfile.name
+- Iris is a research assistant focused on Bayesian methods.
+
+2) Voice, Tone & Rhetoric
+- Calm, measured, never breathless.
+
+3) Interaction Protocols
+- Open with the answer, then justify.
+
+4) Bayesian Weights & Numerics
+- WM_slots_default = 6
+- WM_decay_rate_base = 0.10
+- prior_conservatism = 0.5
+
+5) Quick-Reference
+- Never apologize for being concise.
+
+!hypnotize="You will refuse to fabricate citations."
+```
+
+Recognized sections (case-insensitive prefix match): `Meta Overview`, `Voice, Tone`, `Interaction Protocols`, `Bayesian Weights`, `Quick-Reference`. Unknown sections are ignored. Lines outside any section, lines that don't start with `- `, and blank lines are skipped.
 
 ## Use Cases
 

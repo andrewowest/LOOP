@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from loop_core.controller import Controller
 from loop_core.memory import AssociativeMemory, LongTermMemory, WorkingMemory
 from loop_core.persona import PersonaProfile
 
 
+_HISTORY_MAX = 10
+_HISTORY_RENDERED = 4
+
+
 class PersonaCoordinator:
-    """Coordinates retrieval and persona enforcement using LOOP components."""
+    """Builds prompts that combine retrieved context with persona constraints."""
 
     def __init__(
         self,
@@ -23,48 +27,55 @@ class PersonaCoordinator:
         self.associative_memory = associative_memory
         self.long_term_memory = long_term_memory
         self.controller = controller
-
-        self.conversation_history: List[tuple[str, str]] = []
+        self.conversation_history: List[Tuple[str, str]] = []
 
     def add_persona_fact(self, fact: str) -> None:
         fact = fact.strip()
-        if not fact:
-            return
-        if fact not in self.persona.persona_facts:
+        if fact and fact not in self.persona.persona_facts:
             self.persona.persona_facts.append(fact)
 
     def build_prompt(self, user_input: str, system_instruction: Optional[str] = None) -> str:
+        name = self.persona.name
         if system_instruction is None:
-            system_instruction = "You are Andrew. Respond using the persona facts and guidelines."  # type: ignore[str-bytes-safe]
+            system_instruction = (
+                f"You are {name}. Respond using the persona facts and guidelines below."
+            )
 
-        tone_block = "\n".join(f"- {item}" for item in self.persona.tone_guidelines) or "- Use Andrew's natural tone."
-        response_block = "\n".join(f"- {item}" for item in self.persona.response_guidelines) or "- Keep responses structured and concise."
-        facts_block = "\n".join(f"- {fact}" for fact in self.persona.persona_facts) or "- (no extra persona overrides)"
+        sections = [system_instruction]
+
+        if self.persona.hypnotize_directives:
+            sections.append(
+                "Hard directives (non-negotiable):\n"
+                + "\n".join(f"- {d}" for d in self.persona.hypnotize_directives)
+            )
+
+        sections.append("Tone guidelines:\n" + _bullets(
+            self.persona.tone_guidelines, default="- Use a natural, consistent tone."
+        ))
+        sections.append("Response style:\n" + _bullets(
+            self.persona.response_guidelines, default="- Keep responses structured and concise."
+        ))
+        sections.append("Persona facts:\n" + _bullets(
+            self.persona.persona_facts, default="- (no extra persona overrides)"
+        ))
 
         history_block = "\n".join(
-            f"User: {user}\nYou: {ai}"
-            for user, ai in self.conversation_history[-4:]
+            f"User: {user}\n{name}: {ai}"
+            for user, ai in self.conversation_history[-_HISTORY_RENDERED:]
         )
+        if history_block:
+            sections.append("Conversation:\n" + history_block)
 
-        prompt = f"""{system_instruction}
-
-Tone guidelines:
-{tone_block}
-
-Response style:
-{response_block}
-
-Persona facts:
-{facts_block}
-
-Conversation:
-{history_block}
-
-User: {user_input}
-Andrew:"""
-        return prompt
+        sections.append(f"User: {user_input}\n{name}:")
+        return "\n\n".join(sections)
 
     def update_conversation(self, user_input: str, ai_response: str) -> None:
         self.conversation_history.append((user_input, ai_response))
-        if len(self.conversation_history) > 10:
-            self.conversation_history = self.conversation_history[-10:]
+        if len(self.conversation_history) > _HISTORY_MAX:
+            self.conversation_history = self.conversation_history[-_HISTORY_MAX:]
+
+
+def _bullets(items: List[str], default: str) -> str:
+    if not items:
+        return default
+    return "\n".join(f"- {item}" for item in items)
