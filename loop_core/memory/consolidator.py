@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
 import torch
 
 from .associative_memory import AssociativeMemory
 from .long_term import LongTermMemory
 from .working_memory import WorkingMemory
+
+if TYPE_CHECKING:
+    from loop_core.persona import PersonaProfile
+    from loop_core.rag import PersonaCoordinator
 
 
 class MemoryConsolidator:
@@ -20,13 +24,15 @@ class MemoryConsolidator:
         associative_memory: AssociativeMemory,
         long_term_memory: LongTermMemory,
         encoder,
-        config: Optional[Dict[str, float]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        coordinator: Optional["PersonaCoordinator"] = None,
     ) -> None:
         self.working_memory = working_memory
         self.associative_memory = associative_memory
         self.long_term_memory = long_term_memory
         self.encoder = encoder
         self.device = working_memory.device
+        self.coordinator = coordinator
 
         config = config or {}
         self.wm_to_am_threshold = float(config.get("wm_to_am_threshold", 0.55))
@@ -43,22 +49,33 @@ class MemoryConsolidator:
         self.mention_bonus = float(config.get("mention_bonus", 0.15))
 
         self.mention_counts: Dict[str, int] = defaultdict(int)
-        self.persisted_keys = set()
+        self.persisted_keys: Set[str] = set()
 
     def process_turn(self, user_text: str, ai_text: str) -> None:
+        """Ingest both halves of a conversation turn and update history.
+
+        If a coordinator was attached at construction time (or via
+        :meth:`attach_coordinator`), its conversation history is updated too —
+        callers don't need to remember to invoke it separately.
+        """
         self._ingest_event(user_text, "user", self.user_base_hint, force_long_term=False)
         self._ingest_event(ai_text, "assistant", self.assistant_base_hint, force_long_term=False)
+        if self.coordinator is not None:
+            self.coordinator.update_conversation(user_text, ai_text)
+
+    def attach_coordinator(self, coordinator: "PersonaCoordinator") -> None:
+        self.coordinator = coordinator
 
     def record_hypnotize(self, payload: str) -> None:
         self._ingest_event(payload, "hypnotize", self.hypnotize_bonus, force_long_term=True)
 
-    def absorb_persona(self, persona) -> None:
+    def absorb_persona(self, persona: "PersonaProfile") -> None:
         """Ingest a PersonaProfile's hypnotize directives as forced LTM entries.
 
         Use this after load_persona_profile() so directives written into a
         profile file behave identically to runtime !hypnotize="..." commands.
         """
-        for directive in getattr(persona, "hypnotize_directives", None) or []:
+        for directive in persona.hypnotize_directives:
             self.record_hypnotize(directive)
 
     def _ingest_event(self, text: str, kind: str, base_hint: float, force_long_term: bool) -> None:

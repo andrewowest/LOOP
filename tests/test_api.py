@@ -3,7 +3,7 @@
 import pytest
 
 from loop_core import LLMEngine, get_engine
-from loop_core.api import _ChatCompletionEngine
+from loop_core.api import DEFAULT_FALLBACK_RESPONSE, _ChatCompletionEngine
 
 
 class _FakeMessage:
@@ -48,7 +48,12 @@ def test_generate_strips_known_prefixes():
 
 def test_generate_falls_back_when_empty():
     engine = _ChatCompletionEngine(_FakeClient("   "), "m", 0.5)
-    assert engine.generate("hi") == "I'm not sure how to respond."
+    assert engine.generate("hi") == DEFAULT_FALLBACK_RESPONSE
+
+
+def test_fallback_response_is_configurable():
+    engine = _ChatCompletionEngine(_FakeClient(""), "m", 0.5, fallback_response="silence")
+    assert engine.generate("hi") == "silence"
 
 
 def test_generate_passes_runtime_through():

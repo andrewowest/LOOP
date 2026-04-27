@@ -74,6 +74,26 @@ def test_bayesian_path_increases_importance_on_hint():
     assert high > low
 
 
+def test_bayesian_log_odds_stay_clamped():
+    """Many extreme updates must not blow up the posterior to NaN."""
+    wm = WorkingMemory(WorkingMemoryConfig(slots=2, use_bayesian=True))
+    for _ in range(100):
+        wm.update(torch.randn(8), {"text": "x", "importance_hint": 0.99})
+    assert torch.isfinite(wm.importance).all()
+    assert (wm.importance <= 1.0).all() and (wm.importance >= 0.0).all()
+
+
+def test_eviction_breaks_ties_by_oldest_write():
+    wm = WorkingMemory(WorkingMemoryConfig(slots=2, decay_rate=0.0, use_bayesian=False))
+    wm.update(torch.randn(8), {"text": "old", "importance_hint": 0.5})
+    wm.update(torch.randn(8), {"text": "new", "importance_hint": 0.5})
+    wm.update(torch.randn(8), {"text": "newest", "importance_hint": 0.5})
+
+    texts = {slot["metadata"]["text"] for slot in wm.storage if slot}
+    assert "old" not in texts
+    assert "newest" in texts
+
+
 def test_temperature_modulates_with_importance():
     wm = WorkingMemory(
         WorkingMemoryConfig(

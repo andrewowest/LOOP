@@ -59,6 +59,20 @@ def test_step_increases_curiosity_when_not_retrieved():
     assert controller.state.curiosity > before
 
 
+def test_decide_action_returns_state_snapshot():
+    controller, _wm, _am = _build()
+    actions = controller.decide_action(torch.randn(8))
+    snapshot = actions["state"]
+
+    controller.step()
+    controller.step(retrieved=True)
+
+    # The snapshot must not track later mutations to the live state.
+    assert snapshot.tick == 0
+    assert controller.state.tick == 2
+    assert snapshot is not controller.state
+
+
 def test_reset_restores_initial_state():
     controller, _wm, _am = _build()
     controller.step()

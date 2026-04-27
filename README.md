@@ -85,6 +85,7 @@ for slot in wm.summary():
 ```python
 from pathlib import Path
 
+import torch
 from sentence_transformers import SentenceTransformer
 
 from loop_core import (
@@ -98,36 +99,37 @@ from loop_core import (
 )
 
 # 1. Memory hierarchy
-wm = WorkingMemory(WorkingMemoryConfig(slots=6))
+persona = load_persona_profile("persona.txt")
+wm_cfg = persona.apply_overrides(WorkingMemoryConfig(slots=6))
+wm = WorkingMemory(wm_cfg)
 am = AssociativeMemory(AssociativeMemoryConfig(capacity=512))
 ltm = LongTermMemory(LongTermMemoryConfig(storage_path=Path("memory/knowledge.jsonl")))
 controller = Controller(wm, am, ControllerConfig())
 
-# 2. Consolidation pipeline (encoder must expose .encode([...], convert_to_numpy=True))
+# 2. Coordinator + consolidation pipeline. Attaching the coordinator means
+#    process_turn() updates conversation history automatically.
+coordinator = persona.create_coordinator(wm, am, ltm)
 encoder = SentenceTransformer("all-MiniLM-L6-v2")
 consolidator = MemoryConsolidator(
     working_memory=wm,
     associative_memory=am,
     long_term_memory=ltm,
     encoder=encoder,
+    coordinator=coordinator,
     config={"wm_to_am_threshold": 0.55, "am_to_ltm_threshold": 0.75},
 )
+consolidator.absorb_persona(persona)  # !hypnotize directives → LTM
 
-# 3. Persona — !hypnotize directives in the file are absorbed straight to LTM
-persona = load_persona_profile("persona.txt")
-consolidator.absorb_persona(persona)
-
-coordinator = persona.create_coordinator(wm, am, ltm, controller)
-
-# 4. Optional: an LLM engine for generation
+# 3. Optional: an LLM engine for generation
 engine = get_engine("groq", runtime={"model": "llama-3.3-70b-versatile"})
 
-# 5. Process a conversation turn
+# 4. Process a conversation turn
 user_input = "What's my favorite color?"
+query = encoder.encode([user_input], convert_to_numpy=True)[0]
+actions = controller.decide_action(torch.tensor(query))   # probe memory
 ai_response = engine.generate(coordinator.build_prompt(user_input))
-coordinator.update_conversation(user_input, ai_response)
-consolidator.process_turn(user_input, ai_response)
-controller.step()  # advance one turn: decay energy, cool associative memory
+consolidator.process_turn(user_input, ai_response)        # ingest + history update
+controller.step(retrieved=actions["retrieve"] is not None)  # advance one turn
 ```
 
 ### Integration with Existing RAG

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
-from loop_core.controller import Controller
 from loop_core.memory import AssociativeMemory, LongTermMemory, WorkingMemory
+from loop_core.memory.working_memory import WorkingMemoryConfig
 
 if TYPE_CHECKING:
     from loop_core.rag import PersonaCoordinator
@@ -45,12 +46,28 @@ class PersonaProfile:
         # Back-compat shim for the original singular attribute.
         return self.hypnotize_directives[-1] if self.hypnotize_directives else None
 
+    def apply_overrides(self, config: WorkingMemoryConfig) -> WorkingMemoryConfig:
+        """Return a copy of `config` with the profile's WM tunables applied.
+
+        Fields that the profile didn't set are left untouched. `prior_conservatism`
+        is interpreted as a probability and converted to log-odds.
+        """
+        updates: Dict[str, float] = {}
+        if self.working_memory_slots is not None:
+            updates["slots"] = self.working_memory_slots
+        if self.working_memory_decay is not None:
+            updates["decay_rate"] = self.working_memory_decay
+            updates["bayesian_decay"] = self.working_memory_decay
+        if self.prior_conservatism is not None:
+            p = min(max(self.prior_conservatism, 1e-3), 1 - 1e-3)
+            updates["bayesian_prior_log_odds"] = math.log(p / (1 - p))
+        return replace(config, **updates) if updates else config
+
     def create_coordinator(
         self,
         working_memory: WorkingMemory,
         associative_memory: AssociativeMemory,
         long_term_memory: LongTermMemory,
-        controller: Controller,
     ) -> "PersonaCoordinator":
         from loop_core.rag import PersonaCoordinator
 
@@ -59,7 +76,6 @@ class PersonaProfile:
             working_memory=working_memory,
             associative_memory=associative_memory,
             long_term_memory=long_term_memory,
-            controller=controller,
         )
 
 

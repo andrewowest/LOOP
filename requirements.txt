@@ -1,5 +1,0 @@
-torch>=2.0.0
-sentence-transformers>=2.2.0
-# Provider SDKs are optional. Install only the one(s) you use:
-#   pip install groq>=0.4.0
-#   pip install openai>=1.0.0

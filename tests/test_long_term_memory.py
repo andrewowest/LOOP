@@ -46,6 +46,19 @@ def test_load_recent_empty_when_file_missing(tmp_path):
     assert ltm.load_recent() == []
 
 
+def test_records_preserve_unicode_separators(tmp_path):
+    """Regression: str.splitlines() splits on U+2028/U+2029, str.split('\\n') doesn't."""
+    path = tmp_path / "k.jsonl"
+    ltm = LongTermMemory(LongTermMemoryConfig(storage_path=path))
+    payload = "first line second line"  # contains U+2028
+    ltm.consolidate([{"text": payload}])
+    ltm.consolidate([{"text": "next"}])
+
+    recent = ltm.load_recent()
+    assert len(recent) == 2
+    assert recent[0]["text"] == payload
+
+
 def test_existing_file_line_count_preserved(tmp_path):
     path = tmp_path / "k.jsonl"
     path.write_text("\n".join(json.dumps({"text": f"x{i}"}) for i in range(4)) + "\n")

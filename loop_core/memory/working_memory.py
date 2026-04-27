@@ -37,6 +37,10 @@ class WorkingMemory:
         self.device = config.device or torch.device("cpu")
         self.storage: List[Optional[Dict[str, Any]]] = [None] * config.slots
         self.importance = torch.zeros(config.slots, device=self.device)
+        # Per-slot monotonic write-stamp; used to break importance ties so the
+        # oldest tied slot wins eviction (LRU among equals).
+        self._inserted_at: List[int] = [0] * config.slots
+        self._write_counter = 0
         self._use_bayes = config.use_bayesian
         self._bayes_engine: Optional[BayesianEngine] = None
         self.last_slot_index: Optional[int] = None
@@ -54,6 +58,8 @@ class WorkingMemory:
         for idx in range(len(self.storage)):
             self.storage[idx] = None
         self.importance.zero_()
+        self._inserted_at = [0] * len(self.storage)
+        self._write_counter = 0
         self.temperature = self.config.temperature_ceiling
         self.last_slot_index = None
         if self._bayes_engine is not None:
@@ -63,8 +69,16 @@ class WorkingMemory:
         for idx, item in enumerate(self.storage):
             if item is None:
                 return idx
-        min_idx = torch.argmin(self.importance).item()
-        return int(min_idx)
+        # Evict the slot with lowest importance; on ties pick the oldest write.
+        importances = self.importance.tolist()
+        best_idx = 0
+        best_key = (importances[0], self._inserted_at[0])
+        for idx in range(1, len(importances)):
+            key = (importances[idx], self._inserted_at[idx])
+            if key < best_key:
+                best_idx = idx
+                best_key = key
+        return best_idx
 
     def update(self, embedding: torch.Tensor, metadata: Dict[str, Any]) -> torch.Tensor:
         if embedding.dim() == 1:
@@ -89,6 +103,8 @@ class WorkingMemory:
             normalized_importance = float(torch.tanh(energy * 0.1).item())
         normalized_importance = max(0.0, min(0.99, normalized_importance))
 
+        self._write_counter += 1
+        self._inserted_at[slot_idx] = self._write_counter
         self.storage[slot_idx] = {
             "embedding": embedding.detach(),
             "metadata": metadata,

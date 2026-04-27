@@ -5,15 +5,12 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 
 _PREFIXES_TO_STRIP = ("Response:", "Assistant:", "AI:")
-_FALLBACK_RESPONSE = "I'm not sure how to respond."
+DEFAULT_FALLBACK_RESPONSE = "I'm not sure how to respond."
 
 
 @runtime_checkable
 class LLMEngine(Protocol):
     """Minimal interface every provider adapter must satisfy."""
-
-    model: str
-    temperature: float
 
     def generate(self, prompt: str, max_tokens: int = 128) -> str: ...
 
@@ -26,10 +23,17 @@ class _ChatCompletionEngine:
     class to instantiate.
     """
 
-    def __init__(self, client: Any, model: str, temperature: float) -> None:
+    def __init__(
+        self,
+        client: Any,
+        model: str,
+        temperature: float,
+        fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
+    ) -> None:
         self.client = client
         self.model = model
         self.temperature = temperature
+        self.fallback_response = fallback_response
 
     def generate(self, prompt: str, max_tokens: int = 128) -> str:
         response = self.client.chat.completions.create(
@@ -43,7 +47,7 @@ class _ChatCompletionEngine:
             if text.startswith(prefix):
                 text = text[len(prefix) :].strip()
                 break
-        return text or _FALLBACK_RESPONSE
+        return text or self.fallback_response
 
 
 class GroqEngine(_ChatCompletionEngine):
@@ -55,6 +59,7 @@ class GroqEngine(_ChatCompletionEngine):
         api_key: Optional[str] = None,
         model: str = DEFAULT_MODEL,
         temperature: float = 0.7,
+        fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
     ) -> None:
         try:
             from groq import Groq
@@ -67,7 +72,12 @@ class GroqEngine(_ChatCompletionEngine):
         if not resolved_key:
             raise ValueError(f"{self.ENV_VAR} not set and no api_key provided.")
 
-        super().__init__(client=Groq(api_key=resolved_key), model=model, temperature=temperature)
+        super().__init__(
+            client=Groq(api_key=resolved_key),
+            model=model,
+            temperature=temperature,
+            fallback_response=fallback_response,
+        )
 
 
 class OpenAIEngine(_ChatCompletionEngine):
@@ -79,6 +89,7 @@ class OpenAIEngine(_ChatCompletionEngine):
         api_key: Optional[str] = None,
         model: str = DEFAULT_MODEL,
         temperature: float = 0.7,
+        fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
     ) -> None:
         try:
             from openai import OpenAI
@@ -91,7 +102,12 @@ class OpenAIEngine(_ChatCompletionEngine):
         if not resolved_key:
             raise ValueError(f"{self.ENV_VAR} not set and no api_key provided.")
 
-        super().__init__(client=OpenAI(api_key=resolved_key), model=model, temperature=temperature)
+        super().__init__(
+            client=OpenAI(api_key=resolved_key),
+            model=model,
+            temperature=temperature,
+            fallback_response=fallback_response,
+        )
 
 
 ENGINE_REGISTRY: Dict[str, type] = {
@@ -119,4 +135,6 @@ def get_engine(
     }
     if "model" in runtime:
         kwargs["model"] = runtime["model"]
+    if "fallback_response" in runtime:
+        kwargs["fallback_response"] = runtime["fallback_response"]
     return engine_cls(**kwargs)

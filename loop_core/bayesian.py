@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -10,7 +10,7 @@ import torch
 class BayesianEngineConfig:
     slots: int
     prior_log_odds: float = 0.0  # logit(0.5)
-    device: torch.device = torch.device("cpu")
+    device: Optional[torch.device] = None
 
 
 class BayesianEngine:
@@ -21,7 +21,8 @@ class BayesianEngine:
             raise ValueError("BayesianEngine requires at least one slot.")
 
         self.config = config
-        self.log_odds = torch.full((config.slots,), config.prior_log_odds, device=config.device)
+        self.device = config.device or torch.device("cpu")
+        self.log_odds = torch.full((config.slots,), config.prior_log_odds, device=self.device)
 
     def reset(self) -> None:
         self.log_odds.fill_(self.config.prior_log_odds)

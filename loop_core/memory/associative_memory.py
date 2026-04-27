@@ -56,15 +56,17 @@ class AssociativeMemory:
     def _select_eviction_index(self) -> int:
         # Score = freshness + usefulness. Evict the lowest: oldest trace that
         # nobody has recalled. retention_factor in (0, 1) tunes how quickly
-        # age erodes the freshness term relative to recall count.
+        # age erodes the freshness term relative to recall count. Ties go to
+        # the older trace (lower age).
         decay = 1.0 - self.config.retention_factor
         best_idx = 0
-        best_score = float("inf")
+        best_key = (float("inf"), 0)
         for idx, trace in enumerate(self.traces):
             staleness = self.step_counter - trace.age
             score = trace.recall_count - staleness * decay
-            if score < best_score:
-                best_score = score
+            key = (score, trace.age)
+            if key < best_key:
+                best_key = key
                 best_idx = idx
         return best_idx
 

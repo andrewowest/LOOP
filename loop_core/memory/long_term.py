@@ -41,36 +41,36 @@ class LongTermMemory:
         if self.config.max_entries > 0 and self._line_count > self.config.max_entries:
             self._truncate()
 
-    def _count_existing_lines(self) -> int:
-        if not self.storage_path.exists():
-            return 0
-        with self.storage_path.open("r", encoding="utf-8") as handle:
-            return sum(1 for _ in handle)
-
-    def _truncate(self) -> None:
-        lines = self.storage_path.read_text(encoding="utf-8").splitlines()
-        trimmed = lines[-self.config.max_entries :]
-        self.storage_path.write_text("\n".join(trimmed) + "\n", encoding="utf-8")
-        self._line_count = len(trimmed)
-
     def load_recent(self, limit: int = 32) -> List[Dict[str, str]]:
         if not self.storage_path.exists():
             return []
-        lines = self.storage_path.read_text(encoding="utf-8").splitlines()
         result: List[Dict[str, str]] = []
-        for line in lines[-limit:]:
+        for record in self._read_records()[-limit:]:
             try:
-                result.append(json.loads(line))
+                result.append(json.loads(record))
             except json.JSONDecodeError:
                 continue
         return result
 
-    def summarize(self, encoder, limit: int = 128) -> Optional[torch.Tensor]:
-        entries = self.load_recent(limit=limit)
-        if not entries:
-            return None
-        embeddings = [encoder(entry["text"]) for entry in entries if "text" in entry]
-        if not embeddings:
-            return None
-        stacked = torch.stack(embeddings, dim=0).to(self.device)
-        return stacked.mean(dim=0)
+    def _count_existing_lines(self) -> int:
+        if not self.storage_path.exists():
+            return 0
+        return len(self._read_records())
+
+    def _truncate(self) -> None:
+        records = self._read_records()
+        trimmed = records[-self.config.max_entries :]
+        self.storage_path.write_text("\n".join(trimmed) + "\n", encoding="utf-8")
+        self._line_count = len(trimmed)
+
+    def _read_records(self) -> List[str]:
+        # Split only on "\n". str.splitlines() also splits on \r, \v, \f, and
+        # the Unicode line/paragraph separators, which can appear unescaped
+        # inside JSON string values and would corrupt records on read-back.
+        text = self.storage_path.read_text(encoding="utf-8")
+        if not text:
+            return []
+        records = text.split("\n")
+        if records and records[-1] == "":
+            records.pop()
+        return records

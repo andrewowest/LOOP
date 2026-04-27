@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from loop_core.controller import Controller
 from loop_core.memory import AssociativeMemory, LongTermMemory, WorkingMemory
 from loop_core.persona import PersonaProfile
 
 
 _HISTORY_MAX = 10
 _HISTORY_RENDERED = 4
+
+
+def _bullets(items: List[str], default: str) -> str:
+    if not items:
+        return default
+    return "\n".join(f"- {item}" for item in items)
 
 
 class PersonaCoordinator:
@@ -20,13 +25,11 @@ class PersonaCoordinator:
         working_memory: Optional[WorkingMemory] = None,
         associative_memory: Optional[AssociativeMemory] = None,
         long_term_memory: Optional[LongTermMemory] = None,
-        controller: Optional[Controller] = None,
     ) -> None:
         self.persona = persona
         self.working_memory = working_memory
         self.associative_memory = associative_memory
         self.long_term_memory = long_term_memory
-        self.controller = controller
         self.conversation_history: List[Tuple[str, str]] = []
 
     def add_persona_fact(self, fact: str) -> None:
@@ -73,9 +76,3 @@ class PersonaCoordinator:
         self.conversation_history.append((user_input, ai_response))
         if len(self.conversation_history) > _HISTORY_MAX:
             self.conversation_history = self.conversation_history[-_HISTORY_MAX:]
-
-
-def _bullets(items: List[str], default: str) -> str:
-    if not items:
-        return default
-    return "\n".join(f"- {item}" for item in items)

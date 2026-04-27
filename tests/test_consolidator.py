@@ -85,6 +85,34 @@ def test_empty_text_is_ignored(tmp_path):
     assert am.traces == []
 
 
+def test_shouting_heuristic():
+    from loop_core.memory.consolidator import _is_shouting
+
+    assert _is_shouting("URGENT FIX")
+    assert _is_shouting("PLEASE help me")
+    assert not _is_shouting("hello")
+    assert not _is_shouting("OK")  # only 2 caps
+    assert not _is_shouting("This Is Title Case")  # density too low
+
+
+def test_caps_emphasis_lifts_importance_hint(tmp_path):
+    """Regression: emphasis_bonus must apply via the shouting branch, not just '!'."""
+    consolidator, _wm, am, _ltm = _build(tmp_path)
+    consolidator.process_turn("THIS IS URGENT", "ok")
+    assert any("URGENT" in (t.metadata.get("text") or "") for t in am.traces)
+
+
+def test_attached_coordinator_history_updates_with_turn(tmp_path):
+    from loop_core import PersonaCoordinator, PersonaProfile
+
+    consolidator, _wm, _am, _ltm = _build(tmp_path)
+    coord = PersonaCoordinator(PersonaProfile(name="Iris"))
+    consolidator.attach_coordinator(coord)
+
+    consolidator.process_turn("hello", "hi back")
+    assert coord.conversation_history == [("hello", "hi back")]
+
+
 def test_timestamp_is_iso_with_offset(tmp_path):
     consolidator, _wm, _am, ltm = _build(tmp_path)
     consolidator.record_hypnotize("test directive")
